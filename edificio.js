@@ -238,11 +238,12 @@ contenedor.appendChild(renderizador.domElement);
 
 const controles = new OrbitControls(camara, renderizador.domElement);
 controles.enableDamping = true;
-controles.dampingFactor = 0.08;
+controles.dampingFactor = 0.04;
 controles.enableZoom = true;
-controles.zoomSpeed = 0.6;
-controles.enablePan = false;
-controles.rotateSpeed = 0.55;
+controles.zoomSpeed = 0.18;
+controles.enablePan = !modoExploracion;
+controles.panSpeed = 0.2;
+controles.rotateSpeed = 0.12;
 controles.minDistance = 8;
 controles.maxDistance = 400;
 controles.minPolarAngle = 0.1;
@@ -277,12 +278,15 @@ escena.add(luzSuperior);
 const cargador = new GLTFLoader();
 
 let modeloCargado = null;
+let pivoteGiroModelo = null;
 let nivelBaseModelo = 0;
 let cajaModelo = null;   // THREE.Box3 real del edificio, ya centrado y rotado
 let tamañoModelo = null; // THREE.Vector3 con ancho/alto/profundidad reales
+const mallasColision = [];
+const mallasSuelo = [];
 
 cargador.load(
-    './modelos/Model.glb',
+    './modelos/ModeloInstituto12.glb',
 
     // --- éxito ---------------------------------------------
     (gltf) => {
@@ -321,6 +325,32 @@ modelo.rotation.y = Math.PI / 1.5; // ~72° (ajusta según el modelo)
         cajaModelo = new THREE.Box3().setFromObject(modelo);
         tamañoModelo = cajaModelo.getSize(new THREE.Vector3());
         nivelBaseModelo = cajaModelo.min.y;
+        pivoteGiroModelo = new THREE.Group();
+        pivoteGiroModelo.position.copy(cajaModelo.getCenter(new THREE.Vector3()));
+        escena.add(pivoteGiroModelo);
+        pivoteGiroModelo.attach(modelo);
+        modelo.updateMatrixWorld(true);
+        modelo.traverse((objeto) => {
+            if (!objeto.isMesh) return;
+
+            const esEscalera = tieneAncestroConNombre(
+                objeto,
+                /grada|escalera|stair|step|pelda/i
+            );
+            const esPuertaOVidrio = tieneAncestroConNombre(
+                objeto,
+                /puerta|door|vidrio|glass|ventana|window|cristal/i
+            );
+            const materiales = Array.isArray(objeto.material)
+                ? objeto.material.map((material) => crearMaterialColision(material))
+                : crearMaterialColision(objeto.material);
+            const mallaColision = new THREE.Mesh(objeto.geometry, materiales);
+            mallaColision.matrixAutoUpdate = false;
+            mallaColision.matrixWorldAutoUpdate = false;
+            mallaColision.matrixWorld.copy(objeto.matrixWorld);
+            if (!esPuertaOVidrio) mallasSuelo.push(mallaColision);
+            if (!esPuertaOVidrio && !esEscalera) mallasColision.push(mallaColision);
+        });
 
         const tamañoMaximo = Math.max(tamañoModelo.x, tamañoModelo.y, tamañoModelo.z);
 
@@ -338,6 +368,18 @@ modelo.rotation.y = Math.PI / 1.5; // ~72° (ajusta según el modelo)
         const vista = CONFIG_CAMARA.vistaCampus;
         camara.position.set(vista.posicion.x, vista.posicion.y, vista.posicion.z);
         controles.target.set(vista.objetivo.x, vista.objetivo.y, vista.objetivo.z);
+        if (!modoExploracion) {
+            const desplazamientoInicial = camara.position.clone().sub(controles.target);
+            const anguloVertical = Math.acos(
+                THREE.MathUtils.clamp(
+                    desplazamientoInicial.y / desplazamientoInicial.length(),
+                    -1,
+                    1
+                )
+            );
+            controles.minPolarAngle = anguloVertical;
+            controles.maxPolarAngle = anguloVertical;
+        }
         controles.update();
 
         controles.minDistance = Math.max(tamañoMaximo * 0.15, 5);
@@ -696,7 +738,7 @@ window.addEventListener('resize', () => {
 // se mueve libremente con el mouse/teclado dentro del campus.
 // ============================================================
 
-const velocidadGiroAutomatico = 0.12; // radianes por segundo
+const velocidadGiroAutomatico = 0.035; // radianes por segundo
 
 // ============================================================
 // 13. MOVIMIENTO CON TECLADO (solo en campus.html, deshabilitado
@@ -704,10 +746,18 @@ const velocidadGiroAutomatico = 0.12; // radianes por segundo
 // ============================================================
 
 const teclasPresionadas = new Set();
-const velocidadMovimiento = 12;
+const velocidadMovimiento = 2;
+const velocidadGiroTeclado = 1.2;
 const vectorArriba = new THREE.Vector3(0, 1, 0);
+const raycasterMovimiento = new THREE.Raycaster();
+const alturaJugador = 1.7;
+const radioJugador = 0.3;
+const alturaPaso = 0.45;
+const bajadaMaxima = 0.9;
 
-const teclasValidas = new Set(['KeyW', 'KeyD', 'KeyS', 'KeyA', 'KeyQ', 'KeyE']);
+const teclasValidas = new Set([
+    'KeyW', 'KeyD', 'KeyS', 'KeyA', 'KeyQ', 'KeyE', 'KeyZ', 'KeyX'
+]);
 
 window.addEventListener('keydown', (evento) => {
 
@@ -740,11 +790,19 @@ function moverConTeclado(deltaSegundos) {
     if (animacionCamaraActiva) return;
     if (teclasPresionadas.size === 0) return;
 
-    const frente = new THREE.Vector3();
+    let giro = 0;
+    if (teclasPresionadas.has('KeyZ')) giro += 1;
+    if (teclasPresionadas.has('KeyX')) giro -= 1;
+    if (giro !== 0) {
+        const direccionVista = controles.target.clone().sub(camara.position);
+        direccionVista.applyAxisAngle(vectorArriba, giro * velocidadGiroTeclado * deltaSegundos);
+        controles.target.copy(camara.position).add(direccionVista);
+    }
+
+    const frente = controles.target.clone().sub(camara.position);
     const derecha = new THREE.Vector3();
     const desplazamiento = new THREE.Vector3();
 
-    camara.getWorldDirection(frente);
     frente.y = 0;
     if (frente.lengthSq() > 0) frente.normalize();
     derecha.crossVectors(frente, vectorArriba).normalize();
@@ -758,10 +816,133 @@ function moverConTeclado(deltaSegundos) {
     if (teclasPresionadas.has('KeyQ')) desplazamiento.y += velocidad;
     if (teclasPresionadas.has('KeyE')) desplazamiento.y -= velocidad;
 
-    if (desplazamiento.lengthSq() > 0) {
-        camara.position.add(desplazamiento);
-        controles.target.add(desplazamiento);
+    if (desplazamiento.lengthSq() === 0) return;
+
+    const movimientoHorizontal = new THREE.Vector3(desplazamiento.x, 0, desplazamiento.z);
+    if (movimientoHorizontal.lengthSq() > 0) {
+        moverHorizontalConColisiones(movimientoHorizontal);
     }
+
+    if (desplazamiento.y !== 0) {
+        const direccionVertical = new THREE.Vector3(0, Math.sign(desplazamiento.y), 0);
+        const permitido = obtenerDistanciaLibre(
+            camara.position,
+            direccionVertical,
+            Math.abs(desplazamiento.y),
+            radioJugador
+        );
+        const movimientoVertical = direccionVertical.multiplyScalar(permitido);
+        camara.position.add(movimientoVertical);
+        controles.target.add(movimientoVertical);
+    }
+}
+
+function moverHorizontalConColisiones(movimiento) {
+    const distancia = movimiento.length();
+    const direccion = movimiento.clone().normalize();
+    const derecha = new THREE.Vector3(-direccion.z, 0, direccion.x);
+    const pieActual = camara.position.y - alturaJugador;
+    const origenSuelo = new THREE.Vector3(
+        camara.position.x + movimiento.x,
+        pieActual + alturaPaso,
+        camara.position.z + movimiento.z
+    );
+
+    raycasterMovimiento.set(origenSuelo, new THREE.Vector3(0, -1, 0));
+    raycasterMovimiento.far = alturaPaso + bajadaMaxima;
+    const interseccionesSuelo = raycasterMovimiento.intersectObjects(mallasSuelo, false);
+    const suelo = interseccionesSuelo.find((interseccion) => {
+        const diferenciaAltura = interseccion.point.y - pieActual;
+        return diferenciaAltura <= alturaPaso && diferenciaAltura >= -bajadaMaxima;
+    });
+
+    const alturaDestino = suelo ? suelo.point.y + alturaJugador : camara.position.y;
+    const desplazamientoVertical = alturaDestino - camara.position.y;
+    const desplazamientoPermitido = obtenerDistanciaHorizontalLibre(
+        camara.position,
+        direccion,
+        distancia,
+        derecha,
+        desplazamientoVertical
+    );
+    const movimientoPermitido = direccion.multiplyScalar(desplazamientoPermitido);
+    movimientoPermitido.y = desplazamientoVertical * (desplazamientoPermitido / distancia);
+    camara.position.add(movimientoPermitido);
+    controles.target.add(movimientoPermitido);
+}
+
+function crearMaterialColision(material) {
+    const materialColision = material.clone();
+    materialColision.side = THREE.DoubleSide;
+    if (
+        materialColision.transparent
+        || /vidrio|glass|cristal/i.test(materialColision.name)
+    ) {
+        materialColision.visible = false;
+    }
+    return materialColision;
+}
+
+function tieneAncestroConNombre(objeto, patron) {
+    let actual = objeto;
+    while (actual) {
+        if (patron.test(actual.name)) return true;
+        actual = actual.parent;
+    }
+    return false;
+}
+
+function obtenerDistanciaHorizontalLibre(origen, direccion, distancia, derecha, desplazamientoVertical) {
+    const alturas = [0.15, 0.55, 0.95].map((fraccion) => {
+        return camara.position.y - alturaJugador + alturaJugador * fraccion
+            + desplazamientoVertical;
+    });
+    const desplazamientosLaterales = [-radioJugador, 0, radioJugador];
+    let distanciaLibre = distancia;
+
+    for (const altura of alturas) {
+        for (const lateral of desplazamientosLaterales) {
+            const puntoOrigen = new THREE.Vector3(
+                origen.x + derecha.x * lateral,
+                altura,
+                origen.z + derecha.z * lateral
+            );
+            raycasterMovimiento.set(puntoOrigen, direccion);
+            raycasterMovimiento.far = distanciaLibre + radioJugador;
+            const interseccion = raycasterMovimiento.intersectObjects(mallasColision, false)[0];
+            if (interseccion) {
+                distanciaLibre = Math.min(
+                    distanciaLibre,
+                    Math.max(0, interseccion.distance - radioJugador)
+                );
+            }
+        }
+    }
+
+    return distanciaLibre;
+}
+
+function obtenerDistanciaLibre(origen, direccion, distancia, margen) {
+    const puntos = [
+        new THREE.Vector3(origen.x, origen.y - alturaJugador + margen, origen.z),
+        origen.clone(),
+        new THREE.Vector3(origen.x, origen.y + alturaJugador * 0.45, origen.z)
+    ];
+    let distanciaLibre = distancia;
+
+    for (const punto of puntos) {
+        raycasterMovimiento.set(punto, direccion);
+        raycasterMovimiento.far = distanciaLibre + margen;
+        const interseccion = raycasterMovimiento.intersectObjects(mallasColision, false)[0];
+        if (interseccion) {
+            distanciaLibre = Math.min(
+                distanciaLibre,
+                Math.max(0, interseccion.distance - margen)
+            );
+        }
+    }
+
+    return distanciaLibre;
 }
 
 // ============================================================
@@ -778,8 +959,8 @@ function animar() {
     if (mezcladorPersonaje) mezcladorPersonaje.update(deltaSegundos);
 
     // --- giro automático del modelo (solo index.html) ---
-    if (modeloCargado && !modoExploracion && !animacionCamaraActiva) {
-        modeloCargado.rotation.y += velocidadGiroAutomatico * deltaSegundos;
+    if (pivoteGiroModelo && !modoExploracion && !animacionCamaraActiva) {
+        pivoteGiroModelo.rotation.y += velocidadGiroAutomatico * deltaSegundos;
     }
 
     moverConTeclado(deltaSegundos);

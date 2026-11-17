@@ -38,8 +38,18 @@
         .detail-body{ display:grid; grid-template-columns:minmax(0,1fr) 190px; gap:22px; align-items:start; }
         #detalle-texto{ white-space:pre-line; color:var(--ink-dim); max-width:none; line-height:1.75; text-align:left; }
         #detalle-imagen{ width:190px; height:220px; object-fit:contain; background:rgba(255,255,255,.92); border:1px solid rgba(255,255,255,.25); border-radius:10px; box-shadow:0 12px 26px rgba(0,0,0,.28); }
+
+        /* ===== Visor 3D (campus real incrustado) ===== */
+        #visor3d{ position:relative; width:100%; height:300px; margin-top:22px; background:#04101f; border:1px solid rgba(255,255,255,.2); border-radius:10px; overflow:hidden; }
+        #visor3d iframe{ display:block; width:100%; height:100%; border:0; }
+        #visor3d-estado{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; padding:20px; text-align:center; color:#b9d9ff; font-size:13px; background:#04101f; transition:opacity .4s ease; }
+        #visor3d-estado.oculto{ opacity:0; pointer-events:none; }
+        .visor-enlace{ display:inline-block; margin-top:10px; color:var(--accent-b); font-size:12px; text-decoration:none; }
+        .visor-enlace:hover{ text-decoration:underline; }
+
         @media (max-width:900px){ .catalog-layout{ grid-template-columns:1fr; } #detalle{ position:relative; top:auto; } }
-        @media (max-width:760px){ .page-wrap{ padding:124px 18px 48px; } .program-header{ align-items:flex-start; flex-direction:column; gap:6px; } .list-grid{ grid-template-columns:1fr; } .card{ min-height:190px; } #detalle{ padding:22px; } .detail-body{ grid-template-columns:1fr; } #detalle-imagen{ width:100%; height:190px; } }
+        @media (max-width:760px){ .page-wrap{ padding:124px 18px 48px; } .program-header{ align-items:flex-start; flex-direction:column; gap:6px; } .list-grid{ grid-template-columns:1fr; } .card{ min-height:190px; } #detalle{ padding:22px; } .detail-body{ grid-template-columns:1fr; } #detalle-imagen{ width:100%; height:190px; } #visor3d{ height:240px; } }
+        @media (prefers-reduced-motion:reduce){ #detalle:not([hidden]){ animation:none; } }
     </style>
 </head>
 <body>
@@ -78,6 +88,11 @@
                     <p id="detalle-texto"></p>
                     <img id="detalle-imagen" src="" alt="">
                 </div>
+
+                <div id="visor3d" aria-label="Modelo 3D del campus en la ubicación de la carrera">
+                    <div id="visor3d-estado">Cargando el campus en 3D…</div>
+                </div>
+                <a id="visor-enlace" class="visor-enlace" href="campus.html">Abrir el campus completo</a>
             </div>
         </div>
     </main>
@@ -133,17 +148,108 @@ Duración general: 3 años · Nivel: Técnico Superior.`
                 detalle: `Está enfocada en el arte culinario, las técnicas de cocina nacional e internacional, la repostería y la gestión de negocios de alimentos y bebidas.
 
 Duración general: 3 años · Nivel: Técnico Superior.`
-            },
-            
-   
+            }
         ];
+
+        /* ================= Campus 3D real =================
+           Se incrusta la página del campus (la de "Explorar campus") y se
+           aprieta por dentro el botón de la carrera, así la cámara vuela a
+           las mismas coordenadas definidas en edificio.js. */
+
+        // ⚠️ Nombre del archivo HTML de "Explorar campus"
+        const CAMPUS_URL = 'campus.html';
+
+        // id de esta página -> data-carrera del menú del campus
+        const CLAVE_CAMPUS = {
+            contabilidad:   'contaduria',
+            secretariado:   'secretariado',
+            administracion: 'administracion',
+            informatica:    'sistemas',
+            gastronomia:    'gastronomia'
+        };
 
         const lista = document.getElementById('lista');
         const detalle = document.getElementById('detalle');
         const titulo = document.getElementById('detalle-titulo');
         const texto = document.getElementById('detalle-texto');
         const imagen = document.getElementById('detalle-imagen');
+        const visor = document.getElementById('visor3d');
+        const estado = document.getElementById('visor3d-estado');
+        document.getElementById('visor-enlace').href = CAMPUS_URL;
 
+        let frame = null;
+        let carreraPendiente = null;
+        let esperaId = null;
+
+        function mostrarEstado(msg){
+            estado.textContent = msg;
+            estado.classList.remove('oculto');
+        }
+
+        function modeloListo(doc){
+            const c = doc.getElementById('cargaModelo');
+            if (!c || c.hidden) return true;
+            const s = doc.defaultView.getComputedStyle(c);
+            return s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0';
+        }
+
+        function enviarACarrera(id){
+            if (!frame) return;
+            let doc;
+            try { doc = frame.contentDocument; } catch (e) { doc = null; }
+            if (!doc){
+                mostrarEstado('No se pudo acceder al campus. Abrí la página desde un servidor (no con doble clic en el archivo).');
+                return;
+            }
+            const boton = doc.querySelector(`[data-carrera="${CLAVE_CAMPUS[id]}"]`);
+            if (boton) boton.click();
+        }
+
+        function prepararCampus(){
+            let doc;
+            try { doc = frame.contentDocument; } catch (e) { doc = null; }
+            if (!doc){
+                mostrarEstado('No se pudo acceder al campus. Abrí la página desde un servidor (no con doble clic en el archivo).');
+                return;
+            }
+
+            // Dejar solo el modelo 3D: ocultar barra, menú y panel del campus
+            const css = doc.createElement('style');
+            css.textContent = '.campus-bar, #menuCarreras, #infoCarrera{ display:none !important; }';
+            doc.head.appendChild(css);
+
+            // Ir a la carrera ya mismo y repetirlo cuando termine de cargar el modelo
+            if (carreraPendiente) enviarACarrera(carreraPendiente);
+
+            const inicio = Date.now();
+            clearInterval(esperaId);
+            esperaId = setInterval(() => {
+                let d;
+                try { d = frame.contentDocument; } catch (e) { d = null; }
+                if (!d){ clearInterval(esperaId); return; }
+                if (modeloListo(d) || Date.now() - inicio > 30000){
+                    clearInterval(esperaId);
+                    estado.classList.add('oculto');
+                    if (carreraPendiente) enviarACarrera(carreraPendiente);
+                }
+            }, 400);
+        }
+
+        function mostrarCampus(id){
+            carreraPendiente = id;
+            if (!frame){
+                frame = document.createElement('iframe');
+                frame.title = 'Campus 3D del Instituto Pío XII';
+                frame.loading = 'eager';
+                frame.addEventListener('load', prepararCampus);
+                frame.src = CAMPUS_URL;
+                visor.appendChild(frame);
+            } else {
+                enviarACarrera(id);
+            }
+        }
+
+        /* ================= Catálogo ================= */
         function crearCard(c){
             const el = document.createElement('div');
             el.className = 'card';
@@ -167,12 +273,14 @@ Duración general: 3 años · Nivel: Técnico Superior.`
             imagen.src = c.imagen;
             imagen.alt = `Imagen de ${c.titulo}`;
             detalle.hidden = false;
+
+            mostrarCampus(c.id);
+
             window.scrollTo({top: detalle.offsetTop - 20, behavior: 'smooth'});
         }
 
         // Renderizar
         carreras.forEach(c=> lista.appendChild(crearCard(c)));
-
     </script>
 
 </body>
