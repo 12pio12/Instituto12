@@ -2,8 +2,14 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Explorar el campus - Instituto Pío XII</title>
+    <meta name="description" content="Recorrido 3D interactivo por el Instituto Tecnológico Pío XII: explora las carreras y cambia entre día, tarde y noche.">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
     <link rel="stylesheet" href="estilo.css">
 
     <!-- THREE.JS -->
@@ -16,345 +22,416 @@
     }
     </script>
 
-    <!-- GSAP: usado por edificio.js para el vuelo de cámara -->
+    <!-- GSAP: vuelo de cámara y transición día/tarde/noche -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 
     <style>
-        body {
-            overflow: hidden;
-            touch-action: none;
-        }
+        body { overflow: hidden; touch-action: none; }
 
-        #visor3D {
-            z-index: 0;
+        /* ---------- CIELO (cambia con body[data-luz]) ---------- */
+        .cielo {
+            position: fixed; inset: 0; z-index: -1;
+            opacity: 0; transition: opacity 1.6s ease;
+            pointer-events: none;
         }
+        #cielo-dia   { background: linear-gradient(180deg, #3f86d9 0%, #8fc4f5 55%, #e4f2fc 100%); }
+        #cielo-tarde { background: linear-gradient(180deg, #2a1f4d 0%, #a8476f 38%, #ff8f4a 72%, #ffd491 100%); }
+        #cielo-noche {
+            background:
+                radial-gradient(1.5px 1.5px at 12% 18%, #fff, transparent),
+                radial-gradient(1px 1px at 28% 8%,  #cfe0ff, transparent),
+                radial-gradient(1.5px 1.5px at 44% 24%, #fff, transparent),
+                radial-gradient(1px 1px at 61% 12%, #fff, transparent),
+                radial-gradient(1.5px 1.5px at 78% 20%, #dbe7ff, transparent),
+                radial-gradient(1px 1px at 90% 9%,  #fff, transparent),
+                radial-gradient(1px 1px at 8% 42%,  #cfe0ff, transparent),
+                radial-gradient(1.5px 1.5px at 70% 38%, #fff, transparent),
+                radial-gradient(circle at 82% 16%, rgba(190,210,255,.9) 0 14px, rgba(190,210,255,.18) 15px 60px, transparent 62px),
+                linear-gradient(180deg, #02040c 0%, #0a1535 60%, #16275a 100%);
+        }
+        body[data-luz="dia"]   #cielo-dia,
+        body[data-luz="tarde"] #cielo-tarde,
+        body[data-luz="noche"] #cielo-noche { opacity: 1; }
 
+        #visor3D { z-index: 0; background: transparent; }
+
+        /* ---------- BARRA SUPERIOR ---------- */
         .campus-bar {
-            position: fixed;
-            top: 20px;
-            left: 20px;
-            z-index: 20;
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            padding: 10px 16px;
-            background: rgba(8, 48, 115, 0.88);
-            border: 1px solid rgba(255, 211, 61, 0.65);
-            border-radius: 10px;
-            backdrop-filter: blur(12px);
-            max-width: calc(100vw - 40px);
+            position: fixed; z-index: 30;
+            top: max(16px, env(safe-area-inset-top)); left: 20px; right: 20px;
+            display: flex; align-items: center; justify-content: space-between; gap: 12px;
+            pointer-events: none;
+        }
+        .campus-bar > * { pointer-events: auto; }
+
+        .glass {
+            background: rgba(8, 30, 70, 0.72);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 14px;
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
         }
 
-        .campus-bar a {
-            color: #ffe06a;
-            text-decoration: none;
-            font-weight: 600;
+        .marca {
+            display: inline-flex; align-items: center; gap: 10px;
+            padding: 9px 16px; text-decoration: none;
+            color: #ffe06a; font: 700 13px var(--font-display); letter-spacing: 1.4px;
+            transition: background .2s;
+        }
+        .marca:hover { background: rgba(20, 60, 130, 0.8); }
+        .marca small { display: block; color: #cfe3ff; font: 500 10.5px var(--font-body); letter-spacing: .3px; }
+
+        .selector-luz { display: flex; gap: 4px; padding: 5px; }
+        .selector-luz button {
+            display: inline-flex; align-items: center; gap: 7px;
+            padding: 9px 15px; border: 0; border-radius: 10px;
+            background: transparent; color: #dbe8fa;
+            font: 600 13px var(--font-body); cursor: pointer;
+            transition: background .25s, color .25s, transform .15s;
+        }
+        .selector-luz button:hover { background: rgba(255, 255, 255, 0.12); }
+        .selector-luz button:active { transform: scale(.96); }
+        .selector-luz button.activo {
+            background: linear-gradient(135deg, #ffe06a, #f5bf23); color: #1a2233;
+            box-shadow: 0 4px 14px rgba(245, 191, 35, .35);
+        }
+        .selector-luz kbd {
+            font: 600 10px var(--font-body); opacity: .6;
+            padding: 1px 5px; border: 1px solid currentColor; border-radius: 4px;
         }
 
-        .campus-bar span {
-            color: #e5edf8;
-            font-size: 13px;
+        .btn-ayuda {
+            width: 40px; height: 40px; border-radius: 50%; border: 0; cursor: pointer;
+            color: #ffe06a; font: 700 17px var(--font-display);
         }
+        .btn-ayuda:hover { background: rgba(20, 60, 130, 0.85); }
 
+        /* ---------- MENÚ DE CARRERAS ---------- */
         #menuCarreras {
-            top: 92px;
-            left: 20px;
+            top: 84px; left: 20px; width: 262px; padding: 14px;
+            background: rgba(8, 30, 70, 0.72);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 16px;
+        }
+        .menu-cabecera { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+        #menuCarreras h2 {
+            margin: 0; font: 700 12px var(--font-display);
+            letter-spacing: 1.8px; text-transform: uppercase; color: #75b9ff;
+        }
+        #menuToggle {
+            width: 28px !important; height: 28px; margin: 0 !important; padding: 0 !important;
+            text-align: center !important; border-radius: 8px !important; font-size: 14px !important;
+        }
+        #menuCarreras button {
+            display: flex; align-items: center; gap: 10px;
+            border: 1px solid transparent;
+            font: 500 13.5px var(--font-body);
+        }
+        #menuCarreras button:hover { transform: translateX(3px); }
+        #menuCarreras button.activo {
+            background: rgba(255, 224, 106, .18);
+            border-color: rgba(255, 224, 106, .65);
+            color: #ffe06a;
+        }
+        #menuCarreras button small { margin-left: auto; font-size: 10.5px; opacity: .65; white-space: nowrap; }
+        #menuCarreras .menu-sep { height: 1px; margin: 6px 0 10px; background: rgba(255,255,255,.14); }
+        #irEntrada { background: rgba(245, 191, 35, .22) !important; color: #ffe06a !important; }
+        #menuCarreras.plegado .lista-menu { display: none; }
+
+        /* ---------- PINES 3D ---------- */
+        #hotspots { position: fixed; inset: 0; z-index: 15; pointer-events: none; overflow: hidden; }
+        .hotspot {
+            position: absolute; left: 0; top: 0; padding: 0; border: 0; background: none;
+            pointer-events: auto; cursor: pointer; will-change: transform;
+        }
+        .hotspot-pin {
+            position: absolute; left: -15px; top: -15px;
+            width: 30px; height: 30px; border-radius: 50%;
+            display: grid; place-items: center;
+            background: linear-gradient(135deg, #ffe06a, #f5bf23); color: #14213a;
+            font: 700 13px var(--font-display);
+            border: 2px solid #fff; box-shadow: 0 6px 18px rgba(0,0,0,.45);
+            transition: transform .2s;
+        }
+        .hotspot-pin::after {
+            content: ""; position: absolute; inset: -2px; border-radius: 50%;
+            border: 2px solid rgba(255, 224, 106, .8);
+            animation: pulso 2s ease-out infinite;
+        }
+        @keyframes pulso { from { transform: scale(1); opacity: .9; } to { transform: scale(2.2); opacity: 0; } }
+        .hotspot-label {
+            position: absolute; left: 22px; top: -14px; white-space: nowrap;
+            padding: 6px 11px; border-radius: 8px;
+            background: rgba(8, 30, 70, .9); color: #fff;
+            font: 600 12px var(--font-body);
+            opacity: 0; transform: translateX(-6px);
+            transition: opacity .2s, transform .2s; pointer-events: none;
+        }
+        .hotspot:hover .hotspot-pin, .hotspot:focus-visible .hotspot-pin { transform: scale(1.18); }
+        .hotspot:hover .hotspot-label, .hotspot:focus-visible .hotspot-label { opacity: 1; transform: none; }
+        .hotspot:focus-visible { outline: none; }
+
+        /* ---------- TÍTULO GRANDE CENTRAL ---------- */
+        #tituloCarrera {
+            position: fixed; z-index: 25; left: 50%; top: 42%;
+            transform: translate(-50%, -50%);
+            width: min(92vw, 1100px); text-align: center;
+            pointer-events: none; opacity: 0;
+        }
+        #tituloCarrera.visible { animation: tituloEntra .7s cubic-bezier(.2,.8,.2,1) forwards; }
+        #tituloCarrera .titulo-area {
+            display: block; margin-bottom: 10px;
+            font: 700 clamp(12px, 1.6vw, 18px) var(--font-body);
+            letter-spacing: 4px; text-transform: uppercase; color: #bfe0ff;
+            text-shadow: 0 2px 12px rgba(0,0,0,.7);
+        }
+        #tituloCarrera .titulo-nombre {
+            display: block;
+            font: 700 clamp(38px, 8vw, 118px) var(--font-display);
+            line-height: 1.02; letter-spacing: 2px; color: #ffe06a;
+            text-shadow: 0 4px 0 rgba(0,0,0,.35), 0 8px 40px rgba(0,0,0,.65);
+        }
+        @keyframes tituloEntra {
+            from { opacity: 0; transform: translate(-50%, -42%) scale(.92); }
+            to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
         }
 
-        @media (max-width: 640px) {
-            .campus-bar {
-                top: max(10px, env(safe-area-inset-top));
-                left: 10px;
-                right: 10px;
-                max-width: none;
-                justify-content: space-between;
-                gap: 8px;
-                padding: 9px 10px;
-            }
+        /* ---------- PANEL DE INFORMACIÓN ---------- */
+        .info-carrera {
+            position: fixed; right: 24px; bottom: 24px; z-index: 40;
+            width: 580px; max-width: calc(100vw - 48px);
+            padding: 26px; color: #fff;
+            background: rgba(5, 14, 34, 0.9);
+            border: 1px solid rgba(117, 185, 255, 0.4);
+            border-top: 3px solid #ffe06a;
+            border-radius: 16px;
+            backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+            box-shadow: 0 24px 60px rgba(0, 0, 0, .5);
+            animation: aparecerCarrera .4s cubic-bezier(.2,.8,.2,1);
+        }
+        .info-carrera[hidden] { display: none !important; }
+        @keyframes aparecerCarrera { from { opacity: 0; transform: translateY(26px); } to { opacity: 1; transform: none; } }
+        .info-carrera-contenido { display: grid; grid-template-columns: 1fr 140px; gap: 22px; align-items: center; }
+        .info-area { display: block; margin-bottom: 8px; color: #75b9ff; font: 700 11px var(--font-body); letter-spacing: 1.5px; text-transform: uppercase; }
+        .info-carrera h2 { margin: 0 0 8px; font: 700 25px var(--font-display); color: #ffe06a; line-height: 1.15; }
+        .info-carrera p { margin: 0 0 12px; color: #b9d9ff; font-size: 14px; line-height: 1.5; }
+        .info-detalle { color: #d9e7f7; font-size: 13px; line-height: 1.65; white-space: pre-line; }
+        .info-carrera img { width: 140px; height: 160px; object-fit: contain; background: #fff; border-radius: 10px; }
+        .cerrar-info {
+            position: absolute; top: 10px; right: 12px; width: 30px; height: 30px;
+            border: 0; border-radius: 50%; background: rgba(255,255,255,.1);
+            color: #fff; font-size: 20px; line-height: 1; cursor: pointer; transition: background .2s;
+        }
+        .cerrar-info:hover { background: rgba(255,255,255,.25); }
 
-            .campus-bar span {
-                font-size: 10px;
-                text-align: right;
-            }
+        /* ---------- AYUDA ---------- */
+        #panelAyuda {
+            position: fixed; z-index: 35; right: 20px; top: calc(max(16px, env(safe-area-inset-top)) + 54px);
+            width: 270px; padding: 16px 18px; color: #e5edf8; font-size: 13px;
+            opacity: 0; transform: translateY(-8px); pointer-events: none;
+            transition: opacity .25s, transform .25s;
+        }
+        #panelAyuda.visible { opacity: 1; transform: none; pointer-events: auto; }
+        #panelAyuda h3 { font: 700 12px var(--font-display); letter-spacing: 1.6px; text-transform: uppercase; color: #75b9ff; margin-bottom: 10px; }
+        #panelAyuda li { list-style: none; display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
+        #panelAyuda li:last-child { border: 0; }
+        #panelAyuda kbd { font: 600 11px var(--font-body); background: rgba(255,255,255,.12); padding: 2px 7px; border-radius: 5px; color: #ffe06a; white-space: nowrap; }
+        .ayuda-movil { display: none !important; }
 
+        /* ---------- CONTROLES TÁCTILES ---------- */
+        #controlesTactiles {
+            display: none;
+            position: fixed; z-index: 20;
+            right: 12px; bottom: max(14px, env(safe-area-inset-bottom)); left: 12px;
+            align-items: flex-end; justify-content: space-between;
+            pointer-events: none;
+        }
+        .grupo-tactil { pointer-events: auto; }
+        .etiqueta-tactil {
+            display: block; margin-bottom: 6px; color: #dbe8fa;
+            font: 700 9px var(--font-body); letter-spacing: 1.2px; text-align: center;
+            text-shadow: 0 1px 5px rgba(0,0,0,.8);
+        }
+        .cruceta-tactil {
+            display: grid; grid-template-columns: repeat(3, 48px);
+            grid-template-rows: repeat(2, 48px); gap: 5px;
+        }
+        .botones-giro { display: flex; gap: 8px; }
+        .control-tactil {
+            display: grid; place-items: center;
+            width: 48px; min-height: 48px; padding: 0;
+            border: 1px solid rgba(255,255,255,.3); border-radius: 14px;
+            background: rgba(8,30,70,.82); color: #fff;
+            box-shadow: 0 5px 16px rgba(0,0,0,.32);
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+            font: 700 21px var(--font-display);
+            touch-action: none; user-select: none; -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none;
+        }
+        .control-tactil:active, .control-tactil.presionado {
+            border-color: #ffe06a; background: rgba(245,191,35,.88); color: #14213a;
+            transform: scale(.96);
+        }
+        .control-tactil:focus-visible { outline: 2px solid #ffe06a; outline-offset: 2px; }
+        .control-arriba { grid-column: 2; grid-row: 1; }
+        .control-izquierda { grid-column: 1; grid-row: 2; }
+        .control-abajo { grid-column: 2; grid-row: 2; }
+        .control-derecha { grid-column: 3; grid-row: 2; }
+        .mostrando-info #controlesTactiles { display: none !important; }
+
+        /* ---------- AVISO ---------- */
+        #aviso {
+            position: fixed; z-index: 60; left: 50%; bottom: 70px;
+            transform: translate(-50%, 12px); opacity: 0; pointer-events: none;
+            padding: 10px 18px; border-radius: 999px; max-width: calc(100vw - 32px);
+            background: rgba(8, 30, 70, .92); border: 1px solid rgba(255,224,106,.55);
+            color: #fff; font: 600 13px var(--font-body); text-align: center;
+            transition: opacity .3s, transform .3s;
+        }
+        #aviso.visible { opacity: 1; transform: translate(-50%, 0); }
+
+        /* ---------- RESPONSIVE ---------- */
+        @media (max-width: 760px) {
+            .campus-bar { left: 10px; right: 10px; flex-wrap: wrap; }
+            .marca small, .selector-luz kbd { display: none; }
+            .selector-luz { order: 3; width: 100%; justify-content: space-between; }
+            .selector-luz button { flex: 1; justify-content: center; padding: 9px 6px; }
             #menuCarreras {
-                top: 78px;
-                left: 10px;
+                top: 118px; left: 10px; width: min(280px, calc(100vw - 20px));
+                max-height: calc(100dvh - 132px); overflow-y: auto;
+                overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
             }
+            #menuCarreras button { min-height: 44px; }
+            #menuCarreras button small { align-self: center; }
+            #menuToggle { width: 44px !important; height: 44px; }
+            #panelAyuda { right: 10px; top: 64px; width: min(290px, calc(100vw - 20px)); }
+            #panelAyuda li.ayuda-teclado { display: none; }
+            #panelAyuda .ayuda-movil { display: flex !important; }
+            #controlesTactiles { display: flex; }
+            .info-carrera { left: 12px; right: 12px; bottom: 12px; width: auto; max-width: none; max-height: 55dvh; overflow-y: auto; padding: 20px; }
+            .info-carrera-contenido { grid-template-columns: 1fr; }
+            .info-carrera img { width: 100%; height: 110px; }
+            .info-carrera h2 { font-size: 21px; }
         }
-        /* ============================================================
-   PANEL INFORMACIÓN DE CARRERA
-   ============================================================ */
-.info-carrera {
-    position: fixed;
-    right: 30px;
-    bottom: 30px;
-
-    width: 620px;
-    max-width: calc(100vw - 60px);
-
-    z-index: 99999;
-
-    background: rgba(3, 10, 24, 0.94);
-    border: 1px solid rgba(117, 185, 255, 0.55);
-    border-radius: 16px;
-
-    padding: 25px;
-
-    color: white;
-
-    box-shadow:
-        0 20px 60px rgba(0, 0, 0, 0.5),
-        0 0 30px rgba(60, 150, 255, 0.15);
-
-    backdrop-filter: blur(15px);
-
-    animation: aparecerCarrera 0.35s ease;
-}
-
-.info-carrera[hidden] {
-    display: none !important;
-}
-
-@keyframes aparecerCarrera {
-
-    from {
-        opacity: 0;
-        transform: translateY(25px);
-    }
-
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-
-}
-
-.info-carrera-contenido {
-
-    display: grid;
-
-    grid-template-columns: 1fr 150px;
-
-    gap: 25px;
-
-    align-items: center;
-
-}
-
-.info-area {
-
-    display: block;
-
-    margin-bottom: 8px;
-
-    color: #75b9ff;
-
-    font-size: 11px;
-
-    font-weight: bold;
-
-    text-transform: uppercase;
-
-    letter-spacing: 1.5px;
-
-}
-
-.info-carrera h2 {
-
-    margin: 0 0 10px;
-
-    color: white;
-
-    font-size: 27px;
-
-}
-
-.info-carrera p {
-
-    margin: 0 0 12px;
-
-    color: #b9d9ff;
-
-    font-size: 14px;
-
-    line-height: 1.5;
-
-}
-
-.info-detalle {
-
-    color: #d9e7f7;
-
-    font-size: 13px;
-
-    line-height: 1.6;
-
-    white-space: pre-line;
-
-}
-
-.info-carrera img {
-
-    width: 150px;
-
-    height: 170px;
-
-    object-fit: contain;
-
-    background: white;
-
-    border-radius: 10px;
-
-}
-
-.cerrar-info {
-
-    position: absolute;
-
-    top: 8px;
-
-    right: 10px;
-
-    width: 30px;
-
-    height: 30px;
-
-    border: none;
-
-    border-radius: 50%;
-
-    background: rgba(255,255,255,.1);
-
-    color: white;
-
-    font-size: 22px;
-
-    cursor: pointer;
-
-}
-
-.cerrar-info:hover {
-
-    background: rgba(255,255,255,.25);
-
-}
-
-@media (max-width: 700px) {
-
-    .info-carrera {
-
-        left: 15px;
-
-        right: 15px;
-
-        bottom: 15px;
-
-        width: auto;
-
-        max-width: none;
-
-    }
-
-    .info-carrera-contenido {
-
-        grid-template-columns: 1fr;
-
-    }
-
-    .info-carrera img {
-
-        width: 100%;
-
-        height: 130px;
-
-    }
-
-}
+        @media (prefers-reduced-motion: reduce) {
+            .hotspot-pin::after, .info-carrera { animation: none; }
+            #tituloCarrera.visible { animation: none; opacity: 1; }
+            .cielo { transition: none; }
+        }
     </style>
 </head>
-<body data-modo="exploracion">
-    
+<body data-modo="exploracion" data-luz="dia">
+
+    <!-- Cielo: cambia con el selector Día / Tarde / Noche -->
+    <div class="cielo" id="cielo-dia"></div>
+    <div class="cielo" id="cielo-tarde"></div>
+    <div class="cielo" id="cielo-noche"></div>
+
     <div id="visor3D"></div>
-    <div id="infoCarrera" class="info-carrera" hidden>
 
-    <button
-        id="cerrarInfoCarrera"
-        class="cerrar-info"
-        type="button">
-        ×
-    </button>
+    <!-- Pines interactivos (los crea edificio.js) -->
+    <div id="hotspots"></div>
 
-    <div class="info-carrera-contenido">
-
-        <div class="info-carrera-texto">
-
-            <span id="infoCarreraArea" class="info-area">
-                Área académica
-            </span>
-
-            <h2 id="infoCarreraTitulo">
-                Carrera
-            </h2>
-
-            <p id="infoCarreraResumen">
-                Información de la carrera.
-            </p>
-
-            <div id="infoCarreraDetalle" class="info-detalle">
-            </div>
-
-        </div>
-
-        <img
-            id="infoCarreraImagen"
-            src=""
-            alt="Imagen de la carrera"
-        >
-
+    <!-- Título grande central (aparece al elegir una carrera, desaparece al moverte) -->
+    <div id="tituloCarrera" aria-hidden="true">
+        <span class="titulo-area"></span>
+        <span class="titulo-nombre"></span>
     </div>
 
-</div>
+    <div id="infoCarrera" class="info-carrera" hidden role="dialog" aria-live="polite">
+        <button id="cerrarInfoCarrera" class="cerrar-info" type="button" aria-label="Cerrar información">×</button>
+        <div class="info-carrera-contenido">
+            <div class="info-carrera-texto">
+                <span id="infoCarreraArea" class="info-area">Área académica</span>
+                <h2 id="infoCarreraTitulo">Carrera</h2>
+                <p id="infoCarreraResumen">Información de la carrera.</p>
+                <div id="infoCarreraDetalle" class="info-detalle"></div>
+            </div>
+            <img id="infoCarreraImagen" src="" alt="Imagen de la carrera">
+        </div>
+    </div>
+
     <div id="cargaModelo">Cargando modelo 3D... 0%</div>
 
-    <div class="campus-bar">
-        <a href="index.html">Volver al inicio</a>
-        <span>WASD: caminar · Z/X: girar · ratón: mirar · rueda: acercar</span>
+    <!-- BARRA SUPERIOR -->
+    <header class="campus-bar">
+        <a class="glass marca" href="index.html" aria-label="Volver al inicio">
+            <span>← INSTITUTO PÍO XII<small>Recorrido 3D del campus</small></span>
+        </a>
+
+        <div class="glass selector-luz" role="group" aria-label="Momento del día">
+            <button type="button" data-luz="dia" class="activo" aria-pressed="true">☀️ Día <kbd>1</kbd></button>
+            <button type="button" data-luz="tarde" aria-pressed="false">🌇 Tarde <kbd>2</kbd></button>
+            <button type="button" data-luz="noche" aria-pressed="false">🌙 Noche <kbd>3</kbd></button>
+        </div>
+
+        <button id="botonAyuda" class="glass btn-ayuda" type="button" aria-label="Controles">?</button>
+    </header>
+
+    <aside id="panelAyuda" class="glass" aria-label="Controles">
+        <h3>Controles</h3>
+        <ul>
+            <li class="ayuda-teclado">Caminar <kbd>W A S D</kbd></li>
+            <li class="ayuda-teclado">Girar <kbd>Z / X</kbd></li>
+            <li class="ayuda-movil">Caminar <kbd>mantén una flecha</kbd></li>
+            <li class="ayuda-movil">Girar <kbd>mantén ↶ o ↷</kbd></li>
+            <li>Escaleras <kbd>camina hacia ellas</kbd></li>
+            <li class="ayuda-teclado">Mirar <kbd>arrastrar</kbd></li>
+            <li class="ayuda-movil">Mirar <kbd>arrastra el escenario</kbd></li>
+            <li class="ayuda-teclado">Copiar coordenadas <kbd>P</kbd></li>
+            <li class="ayuda-teclado">Día · Tarde · Noche <kbd>1 2 3</kbd></li>
+            <li class="ayuda-teclado">Cerrar panel <kbd>Esc</kbd></li>
+        </ul>
+    </aside>
+
+    <!-- MENÚ DE CARRERAS: data-carrera debe coincidir con CONFIG_CAMARA.destinos -->
+    <nav id="menuCarreras" aria-label="Carreras">
+        <div class="menu-cabecera">
+            <h2>Explorar carreras</h2>
+            <button type="button" id="menuToggle" aria-label="Plegar menú" aria-controls="listaCarreras" aria-expanded="true">☰</button>
+        </div>
+        <div class="lista-menu" id="listaCarreras">
+            <button type="button" data-carrera="administracion">📋 Administración de Empresas <small>Planta baja</small></button>
+            <button type="button" data-carrera="contaduria">📊 Contaduría General <small>1.er piso</small></button>
+            <button type="button" data-carrera="secretariado">📚 Secretariado Ejec. <small>2.º piso</small></button>
+            <button type="button" data-carrera="sistemas">💻 Sistemas Informáticos <small>3.er piso</small></button>
+            <button type="button" data-carrera="gastronomia">👨‍🍳 Gastronomía <small>Casita</small></button>
+            <div class="menu-sep"></div>
+            <button type="button" data-carrera="administrativo">🏛️ Área Administrativa <small>Oficinas</small></button>
+            <div class="menu-sep"></div>
+            <button type="button" id="irEntrada">🚪 Entrar al instituto</button>
+            <button type="button" id="volverCampus">🏫 Vista general</button>
+        </div>
+    </nav>
+
+    <div id="controlesTactiles" role="group" aria-label="Controles para caminar y girar">
+        <div class="grupo-tactil">
+            <span class="etiqueta-tactil" aria-hidden="true">CAMINAR</span>
+            <div class="cruceta-tactil">
+                <button class="control-tactil control-arriba" type="button" data-movimiento="KeyW" aria-label="Caminar hacia adelante">↑</button>
+                <button class="control-tactil control-izquierda" type="button" data-movimiento="KeyA" aria-label="Caminar a la izquierda">←</button>
+                <button class="control-tactil control-abajo" type="button" data-movimiento="KeyS" aria-label="Caminar hacia atrás">↓</button>
+                <button class="control-tactil control-derecha" type="button" data-movimiento="KeyD" aria-label="Caminar a la derecha">→</button>
+            </div>
+        </div>
+        <div class="grupo-tactil">
+            <span class="etiqueta-tactil" aria-hidden="true">GIRAR</span>
+            <div class="botones-giro">
+                <button class="control-tactil" type="button" data-movimiento="KeyZ" aria-label="Girar a la izquierda">↶</button>
+                <button class="control-tactil" type="button" data-movimiento="KeyX" aria-label="Girar a la derecha">↷</button>
+            </div>
+        </div>
     </div>
 
-    <!-- =========================================================
-         MENÚ DE CARRERAS
-         Cada botón usa data-carrera="clave" que debe coincidir
-         con una clave dentro de CONFIG_CAMARA.destinos en edificio.js
-    ========================================================= -->
-    <div id="menuCarreras">
-        <h2>Explorar Carreras</h2>
-
-        <button type="button" data-carrera="contaduria">
-            📊 Contaduría General
-        </button>
-
-        <button type="button" data-carrera="sistemas">
-            💻 Sistemas Informáticos
-        </button>
-
-        <button type="button" data-carrera="secretariado">
-            📚 Secretariado Ejecutivo
-        </button>
-
-        <button type="button" data-carrera="gastronomia">
-            👨‍🍳 Gastronomía
-        </button>
-
-        <button type="button" data-carrera="administracion">
-            📋 Administración
-        </button>
-
-        <button type="button" id="volverCampus">
-            🏫 Volver al Campus
-        </button>
-    </div>
-
+    <script>
+        if (window.innerWidth < 760) {
+            document.getElementById('menuCarreras').classList.add('plegado');
+            const menuToggle = document.getElementById('menuToggle');
+            menuToggle.setAttribute('aria-expanded', 'false');
+            menuToggle.setAttribute('aria-label', 'Mostrar menú de carreras');
+        }
+    </script>
     <script type="module" src="edificio.js"></script>
 </body>
 </html>

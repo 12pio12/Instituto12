@@ -445,9 +445,17 @@ section{
     letter-spacing: 0.3px;
     pointer-events: none;
     transition: opacity 0.4s ease;
+    overflow: hidden;
+    background: linear-gradient(90deg, rgba(117,185,255,.45) var(--p, 0%), rgba(255,255,255,.12) var(--p, 0%));
 }
 
 #cargaModelo.oculto{ opacity: 0; }
+
+/* Accesibilidad: foco visible en todo el sitio */
+a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible{
+    outline: 2px solid var(--accent-b);
+    outline-offset: 2px;
+}
 
 /* =====================================================
    FOOTER
